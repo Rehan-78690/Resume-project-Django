@@ -100,3 +100,4 @@ db.sqlite3
 poetry.lock
 Pipfile.lock
 .env.env
+ss
