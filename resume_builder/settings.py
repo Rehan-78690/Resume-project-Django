@@ -41,7 +41,8 @@ INSTALLED_APPS = [
     'allauth.socialaccount',
     'allauth.socialaccount.providers.google',
     'allauth.socialaccount.providers.facebook',
-
+"drf_spectacular",
+    "drf_spectacular_sidecar",
     # Local apps
     'accounts',
 ]
@@ -105,10 +106,63 @@ AUTHENTICATION_BACKENDS = (
     "allauth.account.auth_backends.AuthenticationBackend",
 )
 
-ACCOUNT_AUTHENTICATION_METHOD = "email"
-ACCOUNT_USERNAME_REQUIRED = False
+# ACCOUNT_AUTHENTICATION_METHOD = "email"
+# ACCOUNT_USERNAME_REQUIRED = False
+# ACCOUNT_EMAIL_REQUIRED = True
+# ACCOUNT_EMAIL_VERIFICATION = "optional"
+# # EMAIL CONFIG – dev: print emails to console
+# EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+# DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="no-reply@example.com")
+
+ACCOUNT_USER_MODEL_USERNAME_FIELD = None
 ACCOUNT_EMAIL_REQUIRED = True
-ACCOUNT_EMAIL_VERIFICATION = "optional"
+ACCOUNT_USERNAME_REQUIRED = False
+ACCOUNT_AUTHENTICATION_METHOD = "email"
+ACCOUNT_EMAIL_VERIFICATION = "none"  # you already handle verification via codes
+
+SOCIALACCOUNT_EMAIL_VERIFICATION = "none"
+SOCIALACCOUNT_EMAIL_REQUIRED = True
+SOCIALACCOUNT_QUERY_EMAIL = True
+SOCIALACCOUNT_AUTO_SIGNUP = True
+SOCIALACCOUNT_STORE_TOKENS = False
+
+
+SOCIALACCOUNT_PROVIDERS = {
+    "google": {
+        "SCOPE": ["profile", "email"],
+        "AUTH_PARAMS": {"access_type": "online"},
+        "APP": {
+            "client_id": os.environ.get("GOOGLE_CLIENT_ID", ""),
+            "secret": os.environ.get("GOOGLE_CLIENT_SECRET", ""),
+            "key": "",
+        },
+    },
+    "facebook": {
+        "METHOD": "oauth2",
+        "SCOPE": ["email", "public_profile"],
+        "FIELDS": [
+            "id",
+            "email",
+            "first_name",
+            "last_name",
+            "picture",
+        ],
+        "APP": {
+            "client_id": os.environ.get("FACEBOOK_CLIENT_ID", ""),
+            "secret": os.environ.get("FACEBOOK_CLIENT_SECRET", ""),
+            "key": "",
+        },
+    },
+}
+
+
+# for swagger
+SPECTACULAR_SETTINGS = {
+    "TITLE": "Resume Builder API",
+    "DESCRIPTION": "Backend API for our Kwickresume-style resume builder (auth, resumes, templates, billing, etc.).",
+    "VERSION": "1.0.0",
+    "SERVE_INCLUDE_SCHEMA": False,  # we expose /api/schema/ separately
+}
 
 
 # ========== REST FRAMEWORK + JWT ==========
@@ -119,6 +173,7 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": (
         "rest_framework.permissions.IsAuthenticated",
     ),
+     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
 }
 
 SIMPLE_JWT = {
