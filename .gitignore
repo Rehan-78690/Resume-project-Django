@@ -102,3 +102,4 @@ Pipfile.lock
 .env.env
 ss
 .env
+/.env
