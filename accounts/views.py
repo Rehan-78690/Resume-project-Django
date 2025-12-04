@@ -26,7 +26,94 @@ from .serializers import (
 )
 
 User = get_user_model()
+# Add to imports
+from allauth.socialaccount.models import SocialAccount
 
+
+@extend_schema(
+    tags=["Profile"],
+    summary="Get basic user profile info",
+    description="Returns name, email, photo, and connected social providers for AI wizard."
+)
+class BasicProfileView(APIView):
+    """
+    GET /api/auth/profile/basic/
+    Returns basic info for AI wizard prefill.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request):
+        user = request.user
+        
+        # Get connected social providers
+        providers = list(
+            SocialAccount.objects.filter(user=user)
+            .values_list('provider', flat=True)
+        )
+        
+        # Build name from first/last name or email
+        name_parts = [user.first_name, user.last_name]
+        name = " ".join([p for p in name_parts if p]).strip()
+        if not name:
+            name = user.email.split('@')[0]  # Fallback to email username
+        
+        return Response({
+            "name": name,
+            "email": user.email,
+            "photo_url": user.avatar_url or "",
+            "providers": providers,
+            "has_google": "google" in providers,
+            "has_facebook": "facebook" in providers
+        })
+
+
+@extend_schema(
+    tags=["Profile"],
+    summary="Get social import capabilities",
+    description="Returns what data can be imported from connected social accounts."
+)
+class SocialImportSourcesView(APIView):
+    """
+    GET /api/auth/profile/import-sources/
+    Returns social import capabilities.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request):
+        user = request.user
+        
+        # Check Google
+        google_account = SocialAccount.objects.filter(
+            user=user, provider='google'
+        ).first()
+        google_connected = bool(google_account)
+        
+        # Check Facebook
+        facebook_account = SocialAccount.objects.filter(
+            user=user, provider='facebook'
+        ).first()
+        facebook_connected = bool(facebook_account)
+        
+        return Response({
+            "google": {
+                "connected": google_connected,
+                "can_import_name": google_connected,
+                "can_import_photo": google_connected,
+                "can_import_profile": False  # Phase 2
+            },
+            "facebook": {
+                "connected": facebook_connected,
+                "can_import_name": facebook_connected,
+                "can_import_photo": facebook_connected,
+                "can_import_profile": False  # Phase 2
+            },
+            "linkedin": {
+                "connected": False,
+                "can_import_name": False,
+                "can_import_photo": False,
+                "can_import_profile": False
+            }
+        })
 
 @extend_schema(
     tags=["Auth"],
@@ -270,35 +357,6 @@ class DeactivateAccountView(APIView):
             status=status.HTTP_200_OK,
         )
 
-
-@extend_schema(
-    tags=["Auth"],
-    summary="Google login (placeholder)",
-)
-class GoogleLoginView(APIView):
-    permission_classes = [permissions.AllowAny]
-
-    def post(self, request, *args, **kwargs):
-        # TODO: verify Google ID token, then issue JWT
-        return Response(
-            {"detail": "Google login not implemented yet."},
-            status=status.HTTP_501_NOT_IMPLEMENTED,
-        )
-
-
-@extend_schema(
-    tags=["Auth"],
-    summary="Facebook login (placeholder)",
-)
-class FacebookLoginView(APIView):
-    permission_classes = [permissions.AllowAny]
-
-    def post(self, request, *args, **kwargs):
-        # TODO: verify Facebook access token, then issue JWT
-        return Response(
-            {"detail": "Facebook login not implemented yet."},
-            status=status.HTTP_501_NOT_IMPLEMENTED,
-        )
 @extend_schema(
     tags=["Auth"],
     summary="Login / Register with Google",

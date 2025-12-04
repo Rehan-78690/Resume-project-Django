@@ -45,6 +45,7 @@ INSTALLED_APPS = [
     "drf_spectacular_sidecar",
     # Local apps
     'accounts',
+     'resumes',
 ]
 
 SITE_ID = 1
@@ -113,6 +114,10 @@ AUTHENTICATION_BACKENDS = (
 # # EMAIL CONFIG – dev: print emails to console
 # EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
 # DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="no-reply@example.com")
+OPENAI_API_KEY = env('OPENAI_API_KEY', default='your-openai-api-key')
+OPENAI_MODEL = env('OPENAI_MODEL', default='gpt-4')
+OPENAI_MAX_RETRIES = env.int('OPENAI_MAX_RETRIES', default=3)
+OPENAI_TIMEOUT = env.int('OPENAI_TIMEOUT', default=30)
 
 ACCOUNT_USER_MODEL_USERNAME_FIELD = None
 ACCOUNT_EMAIL_REQUIRED = True
@@ -183,6 +188,42 @@ REST_FRAMEWORK = {
         "rest_framework.permissions.IsAuthenticated",
     ),
      "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+         'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.UserRateThrottle',
+        'rest_framework.throttling.ScopedRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'user': '100/hour',
+        'ai_generation': '10/hour',
+    },
+}
+# Logging Configuration
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+        },
+        'file': {
+            'class': 'logging.FileHandler',
+            'filename': 'logs/resume_builder.log',
+            'formatter': 'verbose',
+        },
+    },
+    'formatters': {
+        'verbose': {
+            'format': '{levelname} {asctime} {module} {process:d} {thread:d} {message}',
+            'style': '{',
+        },
+    },
+    'loggers': {
+        'resumes': {
+            'handlers': ['console', 'file'],
+            'level': 'INFO',
+            'propagate': True,
+        },
+    },
 }
 
 SIMPLE_JWT = {

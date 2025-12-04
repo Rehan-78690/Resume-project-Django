@@ -1,0 +1,387 @@
+import uuid
+from django.db import models
+from django.conf import settings
+from django.utils import timezone
+from django.utils.text import slugify
+
+
+class Resume(models.Model):
+    class Status(models.TextChoices):
+        DRAFT = "draft", "Draft"
+        PUBLISHED = "published", "Published"
+        ARCHIVED = "archived", "Archived"
+    
+    class Template(models.TextChoices):
+        CLASSIC_1 = "classic-1", "Classic 1"
+        MODERN_1 = "modern-1", "Modern 1"
+        EXECUTIVE_1 = "executive-1", "Executive 1"
+        CREATIVE_1 = "creative-1", "Creative 1"
+        MINIMAL_1 = "minimal-1", "Minimal 1"
+    
+    class Language(models.TextChoices):
+        EN = "en", "English"
+        DE = "de", "German"
+        FR = "fr", "French"
+        ES = "es", "Spanish"
+    
+    class AIModel(models.TextChoices):
+        GPT_4 = "gpt-4", "GPT-4"
+        GPT_4_1 = "gpt-4.1", "GPT-4.1"
+        CLAUDE_3 = "claude-3", "Claude 3"
+    
+    # Core fields
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="resumes"
+    )
+    title = models.CharField(max_length=200, default="My Resume")
+    slug = models.SlugField(max_length=200, unique=True, blank=True)
+    
+    # Styling
+    template_id = models.CharField(
+        max_length=20,
+        choices=Template.choices,
+        default=Template.CLASSIC_1
+    )
+    language = models.CharField(
+        max_length=10,
+        choices=Language.choices,
+        default=Language.EN
+    )
+    
+    # Metadata
+    target_role = models.CharField(max_length=200, blank=True)
+    is_ai_generated = models.BooleanField(default=False)
+    ai_model = models.CharField(
+        max_length=20,
+        choices=AIModel.choices,
+        blank=True
+    )
+    ai_prompt = models.JSONField(default=dict, blank=True)  # Store input for audit
+    
+    # Status
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.DRAFT
+    )
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    last_edited_at = models.DateTimeField(auto_now=True)
+    
+    # Soft delete
+    deleted_at = models.DateTimeField(null=True, blank=True)
+    
+    class Meta:
+        indexes = [
+            models.Index(fields=['user', 'status']),
+            models.Index(fields=['slug']),
+            models.Index(fields=['created_at']),
+        ]
+        ordering = ['-updated_at']
+    
+    def __str__(self):
+        return f"{self.title} - {self.user.email}"
+    
+    def save(self, *args, **kwargs):
+        # Generate slug if not provided
+        if not self.slug:
+            base_slug = slugify(self.title)
+            self.slug = base_slug
+            counter = 1
+            while Resume.objects.filter(slug=self.slug).exclude(pk=self.pk).exists():
+                self.slug = f"{base_slug}-{counter}"
+                counter += 1
+        
+        super().save(*args, **kwargs)
+    
+    def soft_delete(self):
+        """Soft delete the resume"""
+        self.deleted_at = timezone.now()
+        self.save(update_fields=['deleted_at'])
+    
+    def restore(self):
+        """Restore soft-deleted resume"""
+        self.deleted_at = None
+        self.save(update_fields=['deleted_at'])
+
+
+class PersonalInfo(models.Model):
+    resume = models.OneToOneField(
+        Resume,
+        on_delete=models.CASCADE,
+        related_name="personal_info"
+    )
+    
+    # Basic info
+    first_name = models.CharField(max_length=100, blank=True)
+    last_name = models.CharField(max_length=100, blank=True)
+    headline = models.CharField(max_length=200, blank=True)
+    summary = models.TextField(blank=True)
+    
+    # Contact
+    email = models.EmailField(blank=True)
+    phone = models.CharField(max_length=50, blank=True)
+    city = models.CharField(max_length=100, blank=True)
+    country = models.CharField(max_length=100, blank=True)
+    
+    # Links
+    website = models.URLField(blank=True)
+    linkedin_url = models.URLField(blank=True)
+    github_url = models.URLField(blank=True)
+    portfolio_url = models.URLField(blank=True)
+    
+    # Photo
+    photo_url = models.URLField(blank=True)
+    
+    class Meta:
+        verbose_name_plural = "Personal info"
+    
+    def __str__(self):
+        return f"{self.first_name} {self.last_name} - {self.resume.title}"
+
+
+class WorkExperience(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    resume = models.ForeignKey(
+        Resume,
+        on_delete=models.CASCADE,
+        related_name="work_experiences"
+    )
+    
+    # Job details
+    position_title = models.CharField(max_length=200)
+    company_name = models.CharField(max_length=200)
+    city = models.CharField(max_length=100, blank=True)
+    country = models.CharField(max_length=100, blank=True)
+    
+    # Dates as strings (YYYY-MM) for AI compatibility
+    start_date = models.CharField(max_length=10)  # YYYY-MM or YYYY
+    end_date = models.CharField(max_length=10, blank=True)  # YYYY-MM, YYYY, or empty
+    is_current = models.BooleanField(default=False)
+    
+    # Content
+    description = models.TextField(blank=True)
+    bullets = models.JSONField(default=list)  # List of bullet points
+    
+    # Ordering
+    order = models.PositiveIntegerField(default=0)
+    
+    class Meta:
+        ordering = ['-start_date', 'order']
+    
+    def __str__(self):
+        return f"{self.position_title} at {self.company_name}"
+
+
+class Education(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    resume = models.ForeignKey(
+        Resume,
+        on_delete=models.CASCADE,
+        related_name="educations"
+    )
+    
+    # Education details
+    degree = models.CharField(max_length=200)
+    field_of_study = models.CharField(max_length=200, blank=True)
+    school_name = models.CharField(max_length=200)
+    city = models.CharField(max_length=100, blank=True)
+    country = models.CharField(max_length=100, blank=True)
+    
+    # Dates
+    start_date = models.CharField(max_length=10, blank=True)  # YYYY or YYYY-MM
+    end_date = models.CharField(max_length=10, blank=True)  # YYYY or YYYY-MM
+    is_current = models.BooleanField(default=False)
+    
+    # Content
+    description = models.TextField(blank=True)
+    order = models.PositiveIntegerField(default=0)
+    
+    class Meta:
+        ordering = ['-end_date', 'order']
+    
+    def __str__(self):
+        return f"{self.degree} - {self.school_name}"
+
+
+class SkillCategory(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    resume = models.ForeignKey(
+        Resume,
+        on_delete=models.CASCADE,
+        related_name="skill_categories"
+    )
+    
+    name = models.CharField(max_length=100)
+    order = models.PositiveIntegerField(default=0)
+    
+    class Meta:
+        ordering = ['order']
+        verbose_name_plural = "Skill categories"
+    
+    def __str__(self):
+        return f"{self.name} - {self.resume.title}"
+
+
+class SkillItem(models.Model):
+    class Level(models.TextChoices):
+        BEGINNER = "beginner", "Beginner"
+        INTERMEDIATE = "intermediate", "Intermediate"
+        PROFESSIONAL = "professional", "Professional"
+        EXPERT = "expert", "Expert"
+    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    category = models.ForeignKey(
+        SkillCategory,
+        on_delete=models.CASCADE,
+        related_name="items"
+    )
+    
+    name = models.CharField(max_length=100)
+    level = models.CharField(
+        max_length=20,
+        choices=Level.choices,
+        default=Level.INTERMEDIATE
+    )
+    order = models.PositiveIntegerField(default=0)
+    
+    class Meta:
+        ordering = ['order']
+    
+    def __str__(self):
+        return f"{self.name} ({self.level})"
+
+
+class Strength(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    resume = models.ForeignKey(
+        Resume,
+        on_delete=models.CASCADE,
+        related_name="strengths"
+    )
+    
+    label = models.CharField(max_length=100)
+    order = models.PositiveIntegerField(default=0)
+    
+    class Meta:
+        ordering = ['order']
+    
+    def __str__(self):
+        return self.label
+
+
+class Hobby(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    resume = models.ForeignKey(
+        Resume,
+        on_delete=models.CASCADE,
+        related_name="hobbies"
+    )
+    
+    label = models.CharField(max_length=100)
+    order = models.PositiveIntegerField(default=0)
+    
+    class Meta:
+        ordering = ['order']
+        verbose_name_plural = "Hobbies"
+    
+    def __str__(self):
+        return self.label
+
+
+class CustomSection(models.Model):
+    class SectionType(models.TextChoices):
+        ACHIEVEMENTS = "achievements", "Achievements"
+        PROJECTS = "projects", "Projects"
+        AWARDS = "awards", "Awards"
+        CERTIFICATES = "certificates", "Certificates"
+        LANGUAGES = "languages", "Languages"
+        PUBLICATIONS = "publications", "Publications"
+        CUSTOM = "custom", "Custom"
+    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    resume = models.ForeignKey(
+        Resume,
+        on_delete=models.CASCADE,
+        related_name="custom_sections"
+    )
+    
+    type = models.CharField(
+        max_length=20,
+        choices=SectionType.choices,
+        default=SectionType.CUSTOM
+    )
+    title = models.CharField(max_length=200)
+    order = models.PositiveIntegerField(default=0)
+    
+    class Meta:
+        ordering = ['order']
+    
+    def __str__(self):
+        return f"{self.title} ({self.get_type_display()})"
+
+
+class CustomItem(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    section = models.ForeignKey(
+        CustomSection,
+        on_delete=models.CASCADE,
+        related_name="items"
+    )
+    
+    title = models.CharField(max_length=200)
+    subtitle = models.CharField(max_length=200, blank=True)
+    meta = models.CharField(max_length=200, blank=True)
+    description = models.TextField(blank=True)
+    
+    # For items with dates (certificates, projects, etc.)
+    start_date = models.CharField(max_length=10, blank=True)
+    end_date = models.CharField(max_length=10, blank=True)
+    is_current = models.BooleanField(default=False)
+    
+    order = models.PositiveIntegerField(default=0)
+    
+    class Meta:
+        ordering = ['order']
+    
+    def __str__(self):
+        return self.title
+
+
+class ResumeWizardSession(models.Model):
+    """Temporary storage for AI-generated resume drafts"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="wizard_sessions"
+    )
+    
+    input_payload = models.JSONField()  # User input
+    draft_payload = models.JSONField()  # AI-generated draft
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    consumed = models.BooleanField(default=False)
+    
+    class Meta:
+        indexes = [
+            models.Index(fields=['user', 'consumed']),
+            models.Index(fields=['expires_at']),
+        ]
+        ordering = ['-created_at']
+    
+    def is_expired(self):
+        return timezone.now() > self.expires_at
+    
+    def mark_consumed(self):
+        self.consumed = True
+        self.save(update_fields=['consumed'])
+    
+    def __str__(self):
+        return f"Wizard {self.id} - {self.user.email}"

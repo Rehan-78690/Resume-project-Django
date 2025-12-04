@@ -12,7 +12,10 @@ from .views import (
     ResetPasswordView,
     ChangePasswordView,
     DeactivateAccountView,
+    BasicProfileView, 
+    SocialImportSourcesView,
 )
+
 
 app_name = "accounts"
 
@@ -37,4 +40,6 @@ urlpatterns = [
     # social logins (placeholders)
     path("google/", GoogleLoginView.as_view(), name="auth_google"),
     path("facebook/", FacebookLoginView.as_view(), name="auth_facebook"),
+    path("profile/basic/", BasicProfileView.as_view(), name="profile_basic"),
+    path("profile/import-sources/", SocialImportSourcesView.as_view(), name="import_sources"),
 ]
