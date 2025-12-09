@@ -5,13 +5,20 @@ from django.contrib.auth import get_user_model
 from .models import (
     Resume, PersonalInfo, WorkExperience, Education,
     SkillCategory, SkillItem, Strength, Hobby,
-    CustomSection, CustomItem, ResumeWizardSession
+    CustomSection, CustomItem, ResumeWizardSession, Template
 )
 
 User = get_user_model()
 
 
 # === Nested Serializers ===
+class TemplateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Template
+        fields = [
+            'id', 'name', 'slug', 'description', 'category',
+            'is_premium', 'preview_image_url', 'is_active'
+        ]
 class PersonalInfoSerializer(serializers.ModelSerializer):
     class Meta:
         model = PersonalInfo
@@ -92,7 +99,7 @@ class ResumeListSerializer(serializers.ModelSerializer):
     class Meta:
         model = Resume
         fields = [
-            'id', 'title', 'slug', 'template_id', 'language',
+            'id', 'title', 'slug', 'template', 'language',
             'target_role', 'is_ai_generated', 'status',
             'created_at', 'updated_at'
         ]
@@ -100,6 +107,12 @@ class ResumeListSerializer(serializers.ModelSerializer):
 
 class ResumeDetailSerializer(serializers.ModelSerializer):
     """Full resume with all nested data (for editor)"""
+    template = TemplateSerializer(read_only=True)
+    template_id = serializers.PrimaryKeyRelatedField(
+        queryset=Template.objects.filter(is_active=True),
+        source='template',
+        write_only=True
+    )
     personal_info = PersonalInfoSerializer(read_only=True)
     work_experiences = WorkExperienceSerializer(many=True, read_only=True)
     educations = EducationSerializer(many=True, read_only=True)
@@ -111,7 +124,7 @@ class ResumeDetailSerializer(serializers.ModelSerializer):
     class Meta:
         model = Resume
         fields = [
-            'id', 'user', 'title', 'slug', 'template_id', 'language',
+            'id', 'user', 'title', 'slug', 'template', 'template_id', 'language',
             'target_role', 'is_ai_generated', 'ai_model', 'ai_prompt',
             'status', 'created_at', 'updated_at', 'last_edited_at',
             'personal_info', 'work_experiences', 'educations',
@@ -122,9 +135,14 @@ class ResumeDetailSerializer(serializers.ModelSerializer):
 
 class ResumeCreateSerializer(serializers.ModelSerializer):
     """Serializer for creating a new resume"""
+    template_id = serializers.PrimaryKeyRelatedField(
+        queryset=Template.objects.filter(is_active=True),
+        source='template'
+    )
+    
     class Meta:
         model = Resume
-        fields = ['title', 'template_id', 'language', 'target_role']
+        fields = ['id', 'title', 'template_id', 'language', 'target_role']
     
     def create(self, validated_data):
         validated_data['user'] = self.context['request'].user
@@ -133,6 +151,12 @@ class ResumeCreateSerializer(serializers.ModelSerializer):
 
 class ResumeUpdateSerializer(serializers.ModelSerializer):
     """Serializer for updating resume metadata"""
+    template_id = serializers.PrimaryKeyRelatedField(
+        queryset=Template.objects.filter(is_active=True),
+        source='template',
+        required=False
+    )
+    
     class Meta:
         model = Resume
         fields = ['title', 'template_id', 'language', 'target_role', 'status']
@@ -175,7 +199,10 @@ class QuickResumeInputSerializer(serializers.Serializer):
 class QuickResumeConfirmSerializer(serializers.Serializer):
     """Input for confirming AI draft"""
     wizard_id = serializers.UUIDField(required=True)
-    template_id = serializers.CharField(max_length=20, required=True)
+    template_id = serializers.PrimaryKeyRelatedField(
+        queryset=Template.objects.filter(is_active=True),
+        required=True
+    )
     title = serializers.CharField(max_length=200, required=True)
 
 

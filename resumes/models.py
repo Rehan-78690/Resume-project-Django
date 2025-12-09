@@ -5,18 +5,33 @@ from django.utils import timezone
 from django.utils.text import slugify
 
 
+class Template(models.Model):
+    id = models.CharField(primary_key=True, max_length=50)  # e.g. "classic-1"
+    name = models.CharField(max_length=100)
+    slug = models.SlugField(max_length=100, unique=True, blank=True)
+    description = models.TextField(blank=True)
+    category = models.CharField(max_length=50, default="professional")  # professional, creative, etc
+    is_active = models.BooleanField(default=True)
+    is_premium = models.BooleanField(default=False)
+    preview_image_url = models.CharField(max_length=500, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            self.slug = slugify(self.name)
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return self.name
+
+
 class Resume(models.Model):
     class Status(models.TextChoices):
         DRAFT = "draft", "Draft"
         PUBLISHED = "published", "Published"
         ARCHIVED = "archived", "Archived"
     
-    class Template(models.TextChoices):
-        CLASSIC_1 = "classic-1", "Classic 1"
-        MODERN_1 = "modern-1", "Modern 1"
-        EXECUTIVE_1 = "executive-1", "Executive 1"
-        CREATIVE_1 = "creative-1", "Creative 1"
-        MINIMAL_1 = "minimal-1", "Minimal 1"
     
     class Language(models.TextChoices):
         EN = "en", "English"
@@ -29,6 +44,8 @@ class Resume(models.Model):
         GPT_4_1 = "gpt-4.1", "GPT-4.1"
         CLAUDE_3 = "claude-3", "Claude 3"
     
+
+    
     # Core fields
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(
@@ -40,10 +57,12 @@ class Resume(models.Model):
     slug = models.SlugField(max_length=200, unique=True, blank=True)
     
     # Styling
-    template_id = models.CharField(
-        max_length=20,
-        choices=Template.choices,
-        default=Template.CLASSIC_1
+    template = models.ForeignKey(
+        "Template",
+        on_delete=models.PROTECT,
+        db_column="template_id",
+        verbose_name="Template",
+        default="classic-1"
     )
     language = models.CharField(
         max_length=10,

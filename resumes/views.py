@@ -17,7 +17,7 @@ from accounts.models import User
 from .models import (
     Resume, PersonalInfo, WorkExperience, Education,
     SkillCategory, SkillItem, Strength, Hobby,
-    CustomSection, CustomItem, ResumeWizardSession
+    CustomSection, CustomItem, ResumeWizardSession, Template
 )
 from .serializers import (
     ResumeListSerializer, ResumeDetailSerializer,
@@ -27,13 +27,33 @@ from .serializers import (
     StrengthSerializer, HobbySerializer,
     CustomSectionSerializer, QuickResumeInputSerializer,
     QuickResumeConfirmSerializer, SectionRewriteSerializer,
-    ResumeWizardSessionSerializer
+    ResumeWizardSessionSerializer, TemplateSerializer
 )
 from .permissions import IsOwnerOrAdmin
 from .services.ai_service import AIResumeService
 from .services.resume_service import ResumeService
 
 logger = logging.getLogger(__name__)
+
+
+@extend_schema(tags=['templates'])
+class TemplateViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for managing resume templates.
+    """
+    queryset = Template.objects.all()
+    serializer_class = TemplateSerializer
+    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    
+    def get_permissions(self):
+        if self.action in ['create', 'update', 'partial_update', 'destroy']:
+            return [permissions.IsAdminUser()]
+        return [permissions.IsAuthenticated()]
+    
+    def get_queryset(self):
+        if self.request.user.is_staff:
+            return Template.objects.all()
+        return Template.objects.filter(is_active=True)
 
 
 class ResumeViewSet(viewsets.ModelViewSet):
@@ -223,7 +243,7 @@ class QuickResumeConfirmAPIView(APIView):
         serializer.is_valid(raise_exception=True)
         
         wizard_id = serializer.validated_data['wizard_id']
-        template_id = serializer.validated_data['template_id']
+        template = serializer.validated_data['template_id']  # This is now a Template object
         title = serializer.validated_data['title']
         
         # Get wizard session
@@ -250,7 +270,7 @@ class QuickResumeConfirmAPIView(APIView):
         try:
             resume = ResumeService.create_resume_from_draft(
                 user=request.user,
-                template_id=template_id,
+                template_id=template.id,  # Pass ID string to service
                 title=title,
                 draft_payload=wizard.draft_payload
             )

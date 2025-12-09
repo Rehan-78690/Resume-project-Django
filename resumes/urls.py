@@ -4,6 +4,7 @@ from . import views
 
 router = DefaultRouter()
 router.register(r'resumes', views.ResumeViewSet, basename='resume')
+router.register(r'templates', views.TemplateViewSet, basename='template')
 
 urlpatterns = [
     path('', include(router.urls)),
