@@ -1,15 +1,27 @@
 # accounts/social_serializers.py
+
+import logging
 import requests
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
 from rest_framework.exceptions import AuthenticationFailed, ValidationError
 from allauth.socialaccount.models import SocialAccount
 
+logger = logging.getLogger(__name__)
+
 User = get_user_model()
 
 
 class BaseSocialSerializer(serializers.Serializer):
-    access_token = serializers.CharField(required=True)
+    """
+    Base serializer for social auth.
+
+    - For Google we primarily use `id_token` (from @react-oauth/google),
+      but we keep `access_token` optional so it doesn't break subclasses.
+    - For Facebook we still require `access_token` in its own serializer.
+    """
+    access_token = serializers.CharField(required=False, allow_blank=True)
 
     provider_name = None  # override in subclasses
 
@@ -41,35 +53,76 @@ class BaseSocialSerializer(serializers.Serializer):
 
 class GoogleAuthSerializer(BaseSocialSerializer):
     """
-    Accepts a Google access_token (or id_token if you adjust the URL) from frontend,
-    verifies it with Google, then links/creates a user + SocialAccount.
+    Accepts a Google ID token (from @react-oauth/google),
+    verifies it via Google's tokeninfo endpoint, then links/creates a user
+    + SocialAccount.
     """
     provider_name = "google"
 
-    def validate(self, attrs):
-        token = attrs["access_token"]
+    # Frontend will send: { "id_token": "<JWT>" }  (we also accept access_token as fallback)
+    id_token = serializers.CharField(required=False, allow_blank=True)
 
-        # Call Google userinfo endpoint
-        resp = requests.get(
-            "https://www.googleapis.com/oauth2/v3/userinfo",
-            params={"access_token": token},
-            timeout=5,
-        )
+    def validate(self, attrs):
+        raw_token = attrs.get("id_token") or attrs.get("access_token")
+        if not raw_token:
+            raise ValidationError("Google id_token is required.")
+
+        # 1) Ask Google to validate the ID token
+        try:
+            resp = requests.get(
+                "https://oauth2.googleapis.com/tokeninfo",
+                params={"id_token": raw_token},
+                timeout=5,
+            )
+        except requests.RequestException as e:
+            logger.error("Error calling Google tokeninfo: %s", e)
+            raise ValidationError("Could not contact Google token endpoint.")
+
         if resp.status_code != 200:
-            raise ValidationError("Invalid Google access token.")
+            logger.warning(
+                "Google tokeninfo returned non-200: %s, body=%s",
+                resp.status_code,
+                resp.text,
+            )
+            raise ValidationError("Invalid Google token.")
 
         data = resp.json()
-        email = data.get("email")
-        email_verified = data.get("email_verified")
-        sub = data.get("sub")  # unique id for Google user
+        logger.debug("Google tokeninfo data: %s", data)
 
-        if not email or not email_verified:
+        # 2) Audience (client_id) must match our app’s client id
+        aud = data.get("aud")
+        expected_aud = getattr(settings, "GOOGLE_CLIENT_ID", None)
+        if expected_aud and aud != expected_aud:
+            logger.warning(
+                "Google token audience mismatch: aud=%s expected=%s",
+                aud,
+                expected_aud,
+            )
+            raise ValidationError("Invalid Google token audience.")
+
+        # 3) Issuer sanity-check
+        iss = data.get("iss")
+        if iss not in ["accounts.google.com", "https://accounts.google.com"]:
+            logger.warning("Google token issuer invalid: %s", iss)
+            raise ValidationError("Invalid Google token issuer.")
+
+        # 4) Extract user info
+        email = data.get("email")
+        # tokeninfo returns 'true'/'false' strings
+        email_verified = str(data.get("email_verified", "true")).lower() == "true"
+        sub = data.get("sub")  # unique Google user id
+
+        if not email:
+            raise ValidationError("Google did not return an email.")
+        if not email_verified:
             raise ValidationError("Google email not verified.")
+        if not sub:
+            raise ValidationError("Google did not return a user id.")
 
         defaults = {
-            "first_name": data.get("given_name", ""),
-            "last_name": data.get("family_name", ""),
-            "avatar_url": data.get("picture", ""),
+            "first_name": data.get("given_name", "") or "",
+            "last_name": data.get("family_name", "") or "",
+            "avatar_url": data.get("picture", "") or "",
         }
 
         user, is_new = self.get_or_create_social_user(
@@ -96,6 +149,9 @@ class FacebookAuthSerializer(BaseSocialSerializer):
     """
     provider_name = "facebook"
 
+    # For Facebook we still REQUIRE access_token
+    access_token = serializers.CharField(required=True)
+
     def validate(self, attrs):
         token = attrs["access_token"]
 
@@ -108,6 +164,11 @@ class FacebookAuthSerializer(BaseSocialSerializer):
             timeout=5,
         )
         if resp.status_code != 200:
+            logger.warning(
+                "Facebook token validation failed: %s, body=%s",
+                resp.status_code,
+                resp.text,
+            )
             raise ValidationError("Invalid Facebook access token.")
 
         data = resp.json()
@@ -122,8 +183,8 @@ class FacebookAuthSerializer(BaseSocialSerializer):
             picture = data["picture"].get("data", {}).get("url")
 
         defaults = {
-            "first_name": data.get("first_name", ""),
-            "last_name": data.get("last_name", ""),
+            "first_name": data.get("first_name", "") or "",
+            "last_name": data.get("last_name", "") or "",
             "avatar_url": picture or "",
         }
 
