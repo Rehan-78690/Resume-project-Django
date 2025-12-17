@@ -17,8 +17,52 @@ class TemplateSerializer(serializers.ModelSerializer):
         model = Template
         fields = [
             'id', 'name', 'slug', 'description', 'category',
-            'is_premium', 'preview_image_url', 'is_active'
+            'is_premium', 'preview_image_url', 'is_active', 'definition'
         ]
+    
+    def validate_definition(self, value):
+        """Validate template definition schema"""
+        # 1. Require dictionary
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("Definition must be a dictionary")
+        
+        # 2. Require schema_version
+        if "schema_version" not in value:
+            raise serializers.ValidationError("Missing schema_version")
+        if not isinstance(value["schema_version"], int):
+            raise serializers.ValidationError("schema_version must be an integer")
+
+        required_keys = ['layout', 'style', 'sections']
+        for key in required_keys:
+            if key not in value:
+                raise serializers.ValidationError(f"Missing required key: {key}")
+        
+        # 3. Validate layout
+        if not isinstance(value.get('layout'), dict):
+             raise serializers.ValidationError("layout must be a dictionary")
+        if 'type' not in value['layout']:
+             raise serializers.ValidationError("Layout must have a 'type'")
+             
+        # 4. Validate sections
+        sections = value.get('sections')
+        if not isinstance(sections, dict):
+            raise serializers.ValidationError("sections must be a dictionary")
+            
+        valid_areas = ['header', 'left', 'right', 'full']
+        for name, config in sections.items():
+            if not isinstance(config, dict):
+                raise serializers.ValidationError(f"Section {name} config must be a dict")
+            
+            # Check types for known keys
+            if 'visible' in config and not isinstance(config['visible'], bool):
+                raise serializers.ValidationError(f"Section {name} 'visible' must be bool")
+            if 'order' in config:
+                if not isinstance(config['order'], int) or config['order'] < 0:
+                    raise serializers.ValidationError(f"Section {name} 'order' must be non-negative int")
+            if 'area' in config and config['area'] not in valid_areas:
+                 raise serializers.ValidationError(f"Section {name} 'area' invalid. Must be one of {valid_areas}")
+
+        return value
 class PersonalInfoSerializer(serializers.ModelSerializer):
     class Meta:
         model = PersonalInfo
@@ -127,6 +171,7 @@ class ResumeDetailSerializer(serializers.ModelSerializer):
             'id', 'user', 'title', 'slug', 'template', 'template_id', 'language',
             'target_role', 'is_ai_generated', 'ai_model', 'ai_prompt',
             'status', 'created_at', 'updated_at', 'last_edited_at',
+            'section_settings',
             'personal_info', 'work_experiences', 'educations',
             'skill_categories', 'strengths', 'hobbies', 'custom_sections'
         ]
@@ -148,7 +193,6 @@ class ResumeCreateSerializer(serializers.ModelSerializer):
         validated_data['user'] = self.context['request'].user
         return super().create(validated_data)
 
-
 class ResumeUpdateSerializer(serializers.ModelSerializer):
     """Serializer for updating resume metadata"""
     template_id = serializers.PrimaryKeyRelatedField(
@@ -159,7 +203,41 @@ class ResumeUpdateSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = Resume
-        fields = ['title', 'template_id', 'language', 'target_role', 'status']
+        fields = ['title', 'template_id', 'language', 'target_role', 'status', 'section_settings']
+
+    def validate_section_settings(self, value):
+        """Validate user overrides for sections"""
+        if not value:
+            return value
+            
+        valid_sections = [
+            'personal_info', 'work_experiences', 'educations',
+            'skill_categories', 'strengths', 'hobbies', 'custom_sections'
+        ]
+        
+        for key in value.keys():
+            if key not in valid_sections:
+                raise serializers.ValidationError(f"Invalid section key: {key}")
+                
+            setting = value[key]
+            if not isinstance(setting, dict):
+                 raise serializers.ValidationError(f"Setting for {key} must be a dict")
+                 
+            # Allow only specific overrides
+            allowed_overrides = ['order', 'visible']
+            for setting_key in setting.keys():
+                if setting_key not in allowed_overrides:
+                    raise serializers.ValidationError(f"Invalid override: {setting_key} in {key}")
+            
+            # Type validation
+            if 'visible' in setting and not isinstance(setting['visible'], bool):
+                raise serializers.ValidationError(f"invalid type for '{key}.visible': must be bool")
+            
+            if 'order' in setting:
+                if not isinstance(setting['order'], int) or setting['order'] < 0:
+                     raise serializers.ValidationError(f"invalid type for '{key}.order': must be non-negative int")
+                    
+        return value
 
 
 # === AI Wizard Serializers ===

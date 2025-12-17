@@ -14,6 +14,9 @@ class Template(models.Model):
     is_active = models.BooleanField(default=True)
     is_premium = models.BooleanField(default=False)
     preview_image_url = models.CharField(max_length=500, blank=True)
+    
+    # Backend-driven template definition (layout, styles, sections)
+    definition = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -64,6 +67,10 @@ class Resume(models.Model):
         verbose_name="Template",
         default="classic-1"
     )
+    
+    # User overrides for section ordering/visibility (drag & drop)
+    section_settings = models.JSONField(default=dict, blank=True)
+    
     language = models.CharField(
         max_length=10,
         choices=Language.choices,

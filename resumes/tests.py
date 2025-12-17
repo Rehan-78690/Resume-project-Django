@@ -27,7 +27,13 @@ class TemplateTests(TestCase):
         self.client.force_authenticate(user=self.user)
         response = self.client.get(reverse('template-list'))
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        ids = [t['id'] for t in response.data]
+        # Handle pagination
+        if 'results' in response.data:
+            data = response.data['results']
+        else:
+            data = response.data
+            
+        ids = [t['id'] for t in data]
         self.assertIn('classic-1', ids)
         self.assertNotIn('inactive-1', ids)
 
@@ -36,10 +42,19 @@ class TemplateTests(TestCase):
         data = {
             'id': 'new-1',
             'name': 'New Template',
-            'is_active': True
+            'is_active': True,
+            'definition': {
+                'schema_version': 1,
+                'layout': {'type': 'single'},
+                'style': {},
+                'sections': {}
+            }
         }
-        response = self.client.post(reverse('template-list'), data)
+        response = self.client.post(reverse('template-list'), data, format='json')
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        # Check if ID in response matches what we sent
+        created_id = response.data['id']
+        self.assertEqual(created_id, 'new-1')
         self.assertTrue(Template.objects.filter(id='new-1').exists())
 
     def test_user_cannot_create_template(self):
@@ -139,3 +154,113 @@ class AIQuickResumeTests(TestCase):
         }
         response = self.client.post(reverse('ai-quick-resume-confirm'), data)
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+class TemplateDefinitionTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(email='user@example.com', password='password')
+        self.admin = User.objects.create_superuser(email='admin@example.com', password='password')
+        if not Template.objects.filter(id='classic-1').exists():
+            Template.objects.create(id='classic-1', name='Classic', is_active=True)
+
+    def test_admin_create_template_with_definition(self):
+        self.client.force_authenticate(user=self.admin)
+        definition = {
+            "schema_version": 1,
+            "layout": {"type": "one_column"},
+            "style": {"font": "Arial"},
+            "sections": {}
+        }
+        data = {
+            'id': 'modern-custom-def-1',
+            'name': 'Modern Custom Def',
+            'is_active': True,
+            'definition': definition
+        }
+        response = self.client.post(reverse('template-list'), data, format='json')
+        if response.status_code != status.HTTP_201_CREATED:
+            print(f"Create failed: {response.data}")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['definition'], definition)
+        
+    def test_admin_cannot_create_invalid_definition(self):
+        self.client.force_authenticate(user=self.admin)
+        data = {
+            'id': 'broken-1',
+            'name': 'Broken',
+            'is_active': True,
+            'definition': {
+                'schema_version': 1, 
+                'layout': {} 
+            } # Missing sections/style
+        }
+        response = self.client.post(reverse('template-list'), data, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('Missing required key', str(response.data))
+
+    def test_user_update_section_settings(self):
+        self.client.force_authenticate(user=self.user)
+        resume = Resume.objects.create(user=self.user, title='Settings Test', template_id='classic-1')
+        
+        settings = {
+            "work_experiences": {"visible": False}
+        }
+        response = self.client.patch(
+            reverse('resume-detail', args=[resume.id]), 
+            {'section_settings': settings},
+            format='json'
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        if 'section_settings' in response.data:
+             self.assertEqual(response.data['section_settings']['work_experiences']['visible'], False)
+        
+        resume.refresh_from_db()
+        self.assertEqual(resume.section_settings['work_experiences']['visible'], False)
+        
+    def test_user_cannot_update_invalid_settings(self):
+        self.client.force_authenticate(user=self.user)
+        resume = Resume.objects.create(user=self.user, title='Settings Test', template_id='classic-1')
+        
+        # Invalid key
+        response = self.client.patch(
+            reverse('resume-detail', args=[resume.id]), 
+            {'section_settings': {'invalid_section': {}}},
+            format='json'
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        
+        # Invalid value type
+        response = self.client.patch(
+            reverse('resume-detail', args=[resume.id]), 
+            {'section_settings': {'work_experiences': "not-dict"}},
+            format='json'
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_validation_rejects_missing_schema_version(self):
+        self.client.force_authenticate(user=self.admin)
+        data = {
+            'id': 'bad-ver', 'name': 'Bad', 'is_active': True,
+            'definition': {
+               'layout': {'type': 's'}, 'style': {}, 'sections': {}
+            }
+        }
+        response = self.client.post(reverse('template-list'), data, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('Missing schema_version', str(response.data))
+
+    def test_validation_rejects_invalid_section_types(self):
+        self.client.force_authenticate(user=self.admin)
+        data = {
+            'id': 'bad-sec', 'name': 'Bad', 'is_active': True,
+            'definition': {
+               'schema_version': 1,
+               'layout': {'type': 's'}, 'style': {}, 
+               'sections': {
+                   'header': {'visible': "not-bool"}
+               }
+            }
+        }
+        response = self.client.post(reverse('template-list'), data, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('visible', str(response.data))
