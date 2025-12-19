@@ -411,3 +411,65 @@ class ResumeWizardSession(models.Model):
     
     def __str__(self):
         return f"Wizard {self.id} - {self.user.email}"
+
+
+class ShareLink(models.Model):
+    class ResourceType(models.TextChoices):
+        RESUME = "resume", "Resume"
+        COVER_LETTER = "cover_letter", "Cover Letter"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="share_links"
+    )
+    resource_type = models.CharField(max_length=20, choices=ResourceType.choices)
+    resource_id = models.UUIDField()  # Can point to Resume or CoverLetter
+    
+    token = models.CharField(max_length=100, unique=True, db_index=True)
+    is_active = models.BooleanField(default=True)
+    expires_at = models.DateTimeField(null=True, blank=True)
+    
+    # Audit
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_accessed_at = models.DateTimeField(null=True, blank=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['token']),
+            models.Index(fields=['resource_id', 'resource_type']),
+        ]
+
+    def __str__(self):
+        return f"Share {self.resource_type}/{self.resource_id} ({self.token})"
+
+
+class ResumeVersion(models.Model):
+    """Stores snapshots of resume versions for history/restore."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    resume = models.ForeignKey(
+        Resume,
+        on_delete=models.CASCADE,
+        related_name="versions"
+    )
+    version_number = models.PositiveIntegerField()
+    snapshot_data = models.JSONField()  # Full resume state
+    created_at = models.DateTimeField(auto_now_add=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="created_versions"
+    )
+
+    class Meta:
+        unique_together = [['resume', 'version_number']]
+        ordering = ['-version_number']
+        indexes = [
+            models.Index(fields=['resume', '-version_number']),
+        ]
+
+    def __str__(self):
+        return f"{self.resume.title} v{self.version_number}"

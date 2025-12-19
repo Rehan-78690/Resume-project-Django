@@ -17,6 +17,9 @@ urlpatterns = [
 
     # Resumes API
     path("api/", include("resumes.urls")),
+    
+    # Cover Letters API
+    path("api/cover-letters/", include("cover_letters.urls")),
 
     # Social login endpoints (Google/Facebook)
     path("api/auth/social/", include("allauth.socialaccount.urls")),

@@ -316,3 +316,40 @@ class ResumeWizardSessionSerializer(serializers.ModelSerializer):
             draft_payload=draft_payload,
             expires_at=timezone.now() + timedelta(hours=ttl_hours)
         )
+
+# === New AI Serializers ===
+
+class AISummarySerializer(serializers.Serializer):
+    current_role = serializers.CharField(max_length=200)
+    target_role = serializers.CharField(max_length=200)
+    experience_years = serializers.IntegerField(min_value=0)
+    keywords = serializers.ListField(child=serializers.CharField(), required=False, default=list)
+    tone = serializers.CharField(default='professional')
+
+class AIBulletsSerializer(serializers.Serializer):
+    role = serializers.CharField(max_length=200)
+    company = serializers.CharField(max_length=200)
+    description = serializers.CharField(required=True)
+    keywords = serializers.ListField(child=serializers.CharField(), required=False, default=list)
+    tone = serializers.CharField(default='professional')
+    count = serializers.IntegerField(default=4, min_value=1, max_value=10)
+
+class AIExperienceSerializer(serializers.Serializer):
+    role = serializers.CharField(max_length=200)
+    company = serializers.CharField(max_length=200)
+    keywords = serializers.ListField(child=serializers.CharField(), required=False, default=list)
+    tone = serializers.CharField(default='professional')
+
+class AICoverLetterBaseSerializer(serializers.Serializer):
+    resume_summary = serializers.CharField(required=True)
+    job_description = serializers.CharField(required=True)
+    tone = serializers.CharField(default='professional')
+
+class AICoverLetterFullSerializer(serializers.Serializer):
+    resume_id = serializers.UUIDField(required=True)
+    company_name = serializers.CharField(max_length=200)
+    job_title = serializers.CharField(max_length=200)
+    job_description = serializers.CharField(required=False, allow_blank=True)
+    tone = serializers.CharField(default='professional')
+    language = serializers.CharField(default='en')
+    key_points = serializers.ListField(child=serializers.CharField(), required=False, default=list)

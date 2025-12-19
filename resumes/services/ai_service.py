@@ -6,6 +6,8 @@ from django.conf import settings
 from django.utils import timezone
 from openai import OpenAI, RateLimitError, APIError, APITimeoutError
 import openai
+from ai_core.services import AILogService
+from ai_core.models import AIUsageLog
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +23,7 @@ class AIResumeService:
     
     def generate_resume_from_input(
         self, 
+        user,
         user_input: Dict[str, Any], 
         user_data: Dict[str, Any]
     ) -> Dict[str, Any]:
@@ -46,7 +49,16 @@ class AIResumeService:
                 validated_data = self._validate_and_normalize_resume(resume_data, user_input, user_data)
                 
                 # Log successful generation
-                logger.info(f"AI resume generated successfully for user {user_data.get('email')}")
+                AILogService.log_usage(
+                    user=user,
+                    feature_type=AIUsageLog.FeatureType.RESUME_PREVIEW,
+                    model_name=self.model,
+                    prompt=prompt,
+                    tokens_in=response.usage.prompt_tokens,
+                    tokens_out=response.usage.completion_tokens,
+                    success=True
+                )
+                logger.info(f"AI resume generated successfully for user {user.email}")
                 return validated_data
                 
             except json.JSONDecodeError as e:
@@ -73,9 +85,162 @@ class AIResumeService:
                     raise
                 time.sleep(1)
         
+        # Log failure
+        AILogService.log_usage(
+            user=user,
+            feature_type=AIUsageLog.FeatureType.RESUME_PREVIEW,
+            model_name=self.model,
+            prompt=prompt,
+            tokens_in=0, 
+            tokens_out=0,
+            success=False,
+            error_message="Failed after max retries"
+        )
         raise Exception("Failed to generate resume after maximum retries")
     
-    def rewrite_section(self, original_text: str, prompt: str, tone: str = 'professional') -> str:
+    def generate_summary(self, user, current_role, target_role, experience_years, keywords=None, tone='professional'):
+        prompt = f"""Write a professional resume summary for a {current_role} targeting a {target_role} position.
+        Experience: {experience_years} years.
+        Keywords to include: {', '.join(keywords) if keywords else 'None'}
+        Tone: {tone}
+        Length: 3-5 sentences. Focus on achievements and unique value proposition."""
+        
+        return self._generate_text(user, prompt, AIUsageLog.FeatureType.SUMMARY, tone)
+
+    def generate_bullets(self, user, role, company, description, keywords=None, tone='professional', count=4):
+        prompt = f"""Write {count} strong, achievement-oriented resume bullet points for:
+        Role: {role}
+        Company: {company}
+        Context: {description}
+        Keywords: {', '.join(keywords) if keywords else 'None'}
+        Tone: {tone}
+        
+        Format: Return ONLY a JSON array of strings e.g. ["bullet 1", "bullet 2"]"""
+        
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "You are an expert resume writer."},
+                    {"role": "user", "content": prompt}
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.7
+            )
+            content = response.choices[0].message.content
+            bullets = json.loads(content).get('bullets', [])
+            if not bullets and isinstance(json.loads(content), list):
+                 bullets = json.loads(content)
+            
+            # Fallback if specific key is expected but simple list returned
+            if isinstance(json.loads(content), dict) and not bullets:
+                 # Check values
+                 bullets = list(json.loads(content).values())[0]
+
+            AILogService.log_usage(
+                user=user,
+                feature_type=AIUsageLog.FeatureType.BULLETS,
+                model_name=self.model,
+                prompt=prompt,
+                tokens_in=response.usage.prompt_tokens,
+                tokens_out=response.usage.completion_tokens,
+                success=True
+            )
+            return bullets
+        except Exception as e:
+            AILogService.log_usage(user, AIUsageLog.FeatureType.BULLETS, self.model, prompt, success=False, error_message=str(e))
+            raise e
+
+    def generate_experience(self, user, role, company, keywords=None, tone='professional'):
+        prompt = f"""Write a compelling job description paragraph for:
+        Role: {role}
+        Company: {company}
+        Keywords: {', '.join(keywords) if keywords else 'None'}
+        Tone: {tone}
+        Length: 2-3 sentences."""
+        
+        return self._generate_text(user, prompt, AIUsageLog.FeatureType.EXPERIENCE, tone)
+
+    def generate_cover_letter_base(self, user, resume_summary, job_description, tone='professional'):
+        prompt = f"""Write the body paragraphs of a cover letter based on:
+        My Background: {resume_summary}
+        Job Description: {job_description}
+        Tone: {tone}
+        
+        Requirements:
+        1. 3-4 paragraphs
+        2. Focus on matching my skills to job requirements
+        3. Professional and engaging
+        4. Return ONLY the body text."""
+        
+        return self._generate_text(user, prompt, AIUsageLog.FeatureType.COVER_LETTER_BASE, tone)
+
+    def generate_cover_letter_full(self, user, resume_data, job_details, tone='professional'):
+        prompt = f"""Write a full cover letter.
+        Candidate: {resume_data.get('name')}
+        Target Company: {job_details.get('company')}
+        Target Role: {job_details.get('title')}
+        Job Description: {job_details.get('description')}
+        Candidate Summary: {resume_data.get('summary')}
+        Key Skills: {', '.join(resume_data.get('skills', []))}
+        Tone: {tone}
+        
+        Return JSON: {{ "body": "...", "subject": "..." }}"""
+        
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "You are an expert cover letter writer."},
+                    {"role": "user", "content": prompt}
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.7
+            )
+            data = json.loads(response.choices[0].message.content)
+            
+            AILogService.log_usage(
+                user=user,
+                feature_type=AIUsageLog.FeatureType.COVER_LETTER_FULL,
+                model_name=self.model,
+                prompt=prompt,
+                tokens_in=response.usage.prompt_tokens,
+                tokens_out=response.usage.completion_tokens,
+                success=True
+            )
+            return data
+        except Exception as e:
+            AILogService.log_usage(user, AIUsageLog.FeatureType.COVER_LETTER_FULL, self.model, prompt, success=False, error_message=str(e))
+            raise e
+
+    def _generate_text(self, user, prompt, feature_type, tone):
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": f"You are a professional career coach. Tone: {tone}"},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.7,
+                max_tokens=600
+            )
+            text = response.choices[0].message.content.strip()
+            
+            AILogService.log_usage(
+                user=user,
+                feature_type=feature_type,
+                model_name=self.model,
+                prompt=prompt,
+                tokens_in=response.usage.prompt_tokens,
+                tokens_out=response.usage.completion_tokens,
+                success=True
+            )
+            return text
+        except Exception as e:
+            AILogService.log_usage(user, feature_type, self.model, prompt, success=False, error_message=str(e))
+            raise e
+    
+    def rewrite_section(self, user, original_text: str, prompt: str, tone: str = 'professional') -> str:
         """Rewrite a section with AI with retry logic"""
         
         system_prompt = f"""You are a professional resume editor. Rewrite the following content based on the user's request.
@@ -103,18 +268,31 @@ class AIResumeService:
                 )
                 
                 rewritten = response.choices[0].message.content.strip()
+                
+                AILogService.log_usage(
+                    user=user,
+                    feature_type=AIUsageLog.FeatureType.REWRITE,
+                    model_name=self.model,
+                    prompt=f"Original: {original_text}\nPrompt: {prompt}",
+                    tokens_in=response.usage.prompt_tokens,
+                    tokens_out=response.usage.completion_tokens,
+                    success=True
+                )
+                
                 logger.info(f"Section rewritten successfully (tone: {tone})")
                 return rewritten
                 
             except RateLimitError as e:
                 logger.warning(f"Rate limit hit in rewrite (attempt {attempt + 1}): {e}")
                 if attempt == self.max_retries - 1:
+                    AILogService.log_usage(user, AIUsageLog.FeatureType.REWRITE, self.model, prompt, success=False, error_message=str(e))
                     return original_text
                 time.sleep(2 ** attempt)
                 
             except Exception as e:
                 logger.error(f"Error in rewrite (attempt {attempt + 1}): {e}")
                 if attempt == self.max_retries - 1:
+                    AILogService.log_usage(user, AIUsageLog.FeatureType.REWRITE, self.model, prompt, success=False, error_message=str(e))
                     return original_text
                 time.sleep(1)
         

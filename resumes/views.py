@@ -31,26 +31,28 @@ from .serializers import (
 )
 from .permissions import IsOwnerOrAdmin
 from .services.ai_service import AIResumeService
+from .services.ai_service import AIResumeService
 from .services.resume_service import ResumeService
+from .services.pdf_service import PdfService
+from .services.share_service import ShareService
+from .models import ShareLink
+from django.http import HttpResponse
 
 logger = logging.getLogger(__name__)
 
 
 @extend_schema(tags=['templates'])
-class TemplateViewSet(viewsets.ModelViewSet):
+class TemplateViewSet(viewsets.ReadOnlyModelViewSet):
     """
-    ViewSet for managing resume templates.
+    ViewSet for listing resume templates (READ-ONLY).
+    All template creation/modification must be done via admin endpoints.
     """
     queryset = Template.objects.all()
     serializer_class = TemplateSerializer
-    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
-    
-    def get_permissions(self):
-        if self.action in ['create', 'update', 'partial_update', 'destroy']:
-            return [permissions.IsAdminUser()]
-        return [permissions.IsAuthenticated()]
+    permission_classes = [permissions.IsAuthenticated]
     
     def get_queryset(self):
+        """Non-staff users can only see active templates."""
         if self.request.user.is_staff:
             return Template.objects.all()
         return Template.objects.filter(is_active=True)
@@ -135,7 +137,159 @@ class ResumeViewSet(viewsets.ModelViewSet):
         resume = self.get_object()
         serializer = ResumeDetailSerializer(resume)
         return Response(serializer.data)
+
+    @extend_schema(
+        summary="Download resume as PDF",
+        responses={
+            200: OpenApiTypes.BINARY,
+            503: OpenApiResponse(description="PDF provider not configured")
+        }
+    )
+    @action(detail=True, methods=['get'])
+    def pdf(self, request, pk=None):
+        """Generate and download PDF."""
+        resume = self.get_object()
+        
+        try:
+            pdf_service = PdfService()
+            if not pdf_service.provider and not settings.DEBUG:
+                return Response(
+                    {"detail": "PDF provider not configured"},
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE
+                )
+                
+            pdf_content = pdf_service.generate_pdf(resume)
+            
+            response = HttpResponse(pdf_content, content_type='application/pdf')
+            filename = f"resume-{resume.slug}.pdf"
+            response['Content-Disposition'] = f'attachment; filename="{filename}"'
+            return response
+            
+        except ValueError as e:
+            return Response(
+                {"detail": str(e)},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE
+            )
+        except Exception as e:
+            logger.error(f"PDF generation failed: {e}")
+            return Response(
+                {"detail": "Failed to generate PDF"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
     
+    @action(detail=True, methods=['post', 'delete'])
+    def share(self, request, pk=None):
+        """Manage public share link."""
+        resume = self.get_object()
+        
+        if request.method == 'DELETE':
+            ShareService.revoke_link(request.user, ShareLink.ResourceType.RESUME, resume.id)
+            return Response(status=status.HTTP_204_NO_CONTENT)
+            
+        # POST: Create/Get link
+        link = ShareService.create_link(request.user, ShareLink.ResourceType.RESUME, resume.id)
+        # Build full URL (e.g., frontend URL)
+        # Assuming frontend is at localhost:3000/share/resume/<token> or similar
+        # For API, we return the token and maybe the API public url
+        
+        return Response({
+            "token": link.token,
+            "url": f"/public/r/{link.token}/",
+            "expires_at": link.expires_at,
+            "is_active": link.is_active
+        })
+    
+    @extend_schema(
+        summary="Autosave resume",
+        request=ResumeUpdateSerializer,
+        description="Dedicated autosave endpoint - functionally identical to PATCH"
+    )
+    @action(detail=True, methods=['post'])
+    def autosave(self, request, pk=None):
+        """Dedicated autosave endpoint for frontend convenience."""
+        resume = self.get_object()
+        serializer = ResumeUpdateSerializer(
+            resume,
+            data=request.data,
+            partial=True,
+            context={'request': request}
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        
+        return Response({
+            "success": True,
+            "message": "Resume autosaved",
+            "last_edited_at": resume.last_edited_at
+        })
+    
+    @extend_schema(
+        summary="Create resume snapshot",
+        description="Create a version snapshot of the current resume state"
+    )
+    @action(detail=True, methods=['post'])
+    def snapshot(self, request, pk=None):
+        """Create a snapshot of current resume state."""
+        from resumes.services.version_service import VersionService
+        from resumes.models import ResumeVersion
+        
+        resume = self.get_object()
+        version = VersionService.create_snapshot(resume, request.user)
+        
+        return Response({
+            "id": str(version.id),
+            "version_number": version.version_number,
+            "created_at": version.created_at
+        }, status=status.HTTP_201_CREATED)
+    
+    @extend_schema(
+        summary="List resume versions",
+        description="Get version history for this resume"
+    )
+    @action(detail=True, methods=['get'])
+    def versions(self, request, pk=None):
+        """List all versions for this resume."""
+        from resumes.models import ResumeVersion
+        
+        resume = self.get_object()
+        versions = ResumeVersion.objects.filter(resume=resume)
+        
+        data = [{
+            "id": str(v.id),
+            "version_number": v.version_number,
+            "created_at": v.created_at,
+            "created_by": v.created_by.email if v.created_by else None
+        } for v in versions]
+        
+        return Response(data)
+    
+    @extend_schema(
+        summary="Restore resume to version",
+        description="Restore resume to a previous version snapshot"
+    )
+    @action(detail=True, methods=['post'], url_path='versions/(?P<version_id>[^/.]+)/restore')
+    def restore_version(self, request, pk=None, version_id=None):
+        """Restore resume to a specific version."""
+        from resumes.services.version_service import VersionService
+        
+        resume = self.get_object()
+        
+        try:
+            VersionService.restore_version(resume, version_id, request.user)
+            resume.refresh_from_db()
+            
+            serializer = ResumeDetailSerializer(resume)
+            return Response({
+                "message": "Resume restored successfully",
+                "resume": serializer.data
+            })
+        except Exception as e:
+            logger.error(f"Failed to restore version: {e}")
+            return Response(
+                {"detail": "Failed to restore version"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
     def destroy(self, request, *args, **kwargs):
         """Override destroy to soft delete."""
         resume = self.get_object()
@@ -193,6 +347,7 @@ class QuickResumePreviewAPIView(APIView):
         try:
             ai_service = AIResumeService()
             draft_payload = ai_service.generate_resume_from_input(
+                user=request.user,
                 user_input=input_payload,
                 user_data=user_data
             )
@@ -334,7 +489,7 @@ class SectionRewriteAPIView(APIView):
                 )
                 
                 original_text = "\n".join(work_exp.bullets) if work_exp.bullets else work_exp.description
-                rewritten = ai_service.rewrite_section(original_text, prompt, tone)
+                rewritten = ai_service.rewrite_section(request.user, original_text, prompt, tone)
                 
                 # Update
                 work_exp.bullets = [rewritten] if rewritten else []
@@ -355,7 +510,7 @@ class SectionRewriteAPIView(APIView):
                     )
                 
                 original_text = resume.personal_info.summary
-                rewritten = ai_service.rewrite_section(original_text, prompt, tone)
+                rewritten = ai_service.rewrite_section(request.user, original_text, prompt, tone)
                 
                 resume.personal_info.summary = rewritten
                 resume.personal_info.save()

@@ -47,6 +47,8 @@ INSTALLED_APPS = [
     # Local apps
     'accounts',
      'resumes',
+    'ai_core',
+    'cover_letters',
 ]
 
 SITE_ID = 1
@@ -204,6 +206,7 @@ REST_FRAMEWORK = {
     'DEFAULT_THROTTLE_RATES': {
         'user': '100/hour',
         'ai_generation': '10/hour',
+        'ai_rewrite': '30/hour',
     },
 }
 # Logging Configuration

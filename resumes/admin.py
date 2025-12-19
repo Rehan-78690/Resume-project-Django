@@ -11,6 +11,7 @@ from .models import (
     CustomSection,
     CustomItem,
     ResumeWizardSession,
+    ShareLink, # Added ShareLink
 )
 
 # ===== Inlines =====
@@ -106,3 +107,13 @@ class ResumeWizardSessionAdmin(admin.ModelAdmin):
     list_filter = ["consumed"]
     readonly_fields = ["id", "created_at"]
     search_fields = ["user__email"]
+
+
+@admin.register(ShareLink)
+class ShareLinkAdmin(admin.ModelAdmin):
+    list_display = ['user', 'resource_type', 'resource_id', 'is_active', 'created_at', 'last_accessed_at']
+    list_filter = ['resource_type', 'is_active', 'created_at']
+    search_fields = ['user__email', 'token']
+    readonly_fields = ['id', 'created_at', 'last_accessed_at']
+    ordering = ['-created_at']
+
