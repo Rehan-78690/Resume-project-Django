@@ -49,11 +49,11 @@ class TemplateViewSet(viewsets.ReadOnlyModelViewSet):
     """
     queryset = Template.objects.all()
     serializer_class = TemplateSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
     
     def get_queryset(self):
         """Non-staff users can only see active templates."""
-        if self.request.user.is_staff:
+        if self.request.user.is_authenticated and (self.request.user.is_staff or self.request.user.is_superuser):
             return Template.objects.all()
         return Template.objects.filter(is_active=True)
 
@@ -65,19 +65,23 @@ class ResumeViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated, IsOwnerOrAdmin]
     
     def get_queryset(self):
-        """Return only non-deleted resumes for the current user."""
-        return Resume.objects.filter(
-            user=self.request.user,
-            deleted_at__isnull=True
-        ).prefetch_related(
-            'personal_info',
-            'work_experiences',
-            'educations',
-            'skill_categories__items',
-            'strengths',
-            'hobbies',
-            'custom_sections__items'
+        """Return non-deleted resumes. Staff see all, users see only their own."""
+        qs = (
+            Resume.objects
+            .filter(deleted_at__isnull=True)
+            .select_related('template', 'personal_info')
+            .prefetch_related(
+                'work_experiences',
+                'educations',
+                'skill_categories__items',
+                'strengths',
+                'hobbies',
+                'custom_sections__items'
+            )
         )
+        if self.request.user.is_staff or self.request.user.is_superuser:
+            return qs
+        return qs.filter(user=self.request.user)
     
     def get_serializer_class(self):
         if self.action == 'list':
@@ -90,6 +94,26 @@ class ResumeViewSet(viewsets.ModelViewSet):
     
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
+    
+    def update(self, request, *args, **kwargs):
+        """Override update to return full detail serializer after save."""
+        partial = kwargs.pop('partial', False)
+        instance = self.get_object()
+        
+        # Use ResumeUpdateSerializer for validation/saving
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        
+        # Reload from queryset to use prefetched relations
+        instance = self.get_queryset().get(pk=instance.pk)
+        detail_serializer = ResumeDetailSerializer(instance, context={'request': request})
+        return Response(detail_serializer.data)
+    
+    def partial_update(self, request, *args, **kwargs):
+        """Override partial_update to return full detail serializer after save."""
+        kwargs['partial'] = True
+        return self.update(request, *args, **kwargs)
     
     @extend_schema(
         responses=ResumeDetailSerializer,
@@ -105,7 +129,9 @@ class ResumeViewSet(viewsets.ModelViewSet):
                 resume,
                 request.data.get('title')
             )
-            serializer = self.get_serializer(new_resume)
+            # Reload from queryset to get prefetched relations
+            new_resume = self.get_queryset().get(pk=new_resume.pk)
+            serializer = ResumeDetailSerializer(new_resume, context={'request': request})
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         except Exception as e:
             logger.error(f"Failed to duplicate resume {pk}: {e}")
@@ -455,6 +481,8 @@ class SectionRewriteAPIView(APIView):
     AI-powered section rewriting.
     """
     permission_classes = [permissions.IsAuthenticated]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'ai_rewrite'
     
     @extend_schema(
         request=SectionRewriteSerializer,

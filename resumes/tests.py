@@ -50,7 +50,7 @@ class TemplateTests(TestCase):
                 'sections': {}
             }
         }
-        response = self.client.post(reverse('template-list'), data, format='json')
+        response = self.client.post(reverse('admin-template-list'), data, format='json')
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         # Check if ID in response matches what we sent
         created_id = response.data['id']
@@ -61,7 +61,7 @@ class TemplateTests(TestCase):
         self.client.force_authenticate(user=self.user)
         data = {'id': 'hacker-1', 'name': 'Hacker'}
         response = self.client.post(reverse('template-list'), data)
-        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
 
 class ResumeTemplateIntegrationTests(TestCase):
     def setUp(self):
@@ -139,7 +139,7 @@ class AIQuickResumeTests(TestCase):
             'template_id': 'classic-1',
             'title': 'AI Resume'
         }
-        response = self.client.post(reverse('ai-quick-resume-confirm'), data)
+        response = self.client.post(reverse('ai-confirm'), data)
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         resume_id = response.data['resume_id']
         resume = Resume.objects.get(id=resume_id)
@@ -152,7 +152,7 @@ class AIQuickResumeTests(TestCase):
             'template_id': 'non-existent',
             'title': 'AI Resume'
         }
-        response = self.client.post(reverse('ai-quick-resume-confirm'), data)
+        response = self.client.post(reverse('ai-confirm'), data)
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
 class TemplateDefinitionTests(TestCase):
@@ -177,7 +177,7 @@ class TemplateDefinitionTests(TestCase):
             'is_active': True,
             'definition': definition
         }
-        response = self.client.post(reverse('template-list'), data, format='json')
+        response = self.client.post(reverse('admin-template-list'), data, format='json')
         if response.status_code != status.HTTP_201_CREATED:
             print(f"Create failed: {response.data}")
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
@@ -194,7 +194,7 @@ class TemplateDefinitionTests(TestCase):
                 'layout': {} 
             } # Missing sections/style
         }
-        response = self.client.post(reverse('template-list'), data, format='json')
+        response = self.client.post(reverse('admin-template-list'), data, format='json')
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('Missing required key', str(response.data))
 
@@ -245,7 +245,7 @@ class TemplateDefinitionTests(TestCase):
                'layout': {'type': 's'}, 'style': {}, 'sections': {}
             }
         }
-        response = self.client.post(reverse('template-list'), data, format='json')
+        response = self.client.post(reverse('admin-template-list'), data, format='json')
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('Missing schema_version', str(response.data))
 
@@ -261,6 +261,6 @@ class TemplateDefinitionTests(TestCase):
                }
             }
         }
-        response = self.client.post(reverse('template-list'), data, format='json')
+        response = self.client.post(reverse('admin-template-list'), data, format='json')
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('visible', str(response.data))

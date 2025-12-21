@@ -2,45 +2,55 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import permissions, status
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from resumes.models import Resume, ShareLink
 from cover_letters.models import CoverLetter
-from resumes.serializers import ResumeDetailSerializer
-from cover_letters.serializers import CoverLetterSerializer
+from resumes.serializers_public import ResumePublicSerializer
+from cover_letters.serializers_public import CoverLetterPublicSerializer
 from resumes.services.share_service import ShareService
 
 class PublicResumeView(APIView):
     permission_classes = [permissions.AllowAny]
 
     def get(self, request, token):
+        # Get and validate share link
         link = ShareService.get_public_resource(token, ShareLink.ResourceType.RESUME)
         if not link:
             return Response(status=status.HTTP_404_NOT_FOUND)
-            
-        resume = get_object_or_404(Resume, id=link.resource_id)
         
-        # Sanitize? Using standard serializer for now, check fields
-        serializer = ResumeDetailSerializer(resume)
-        data = serializer.data
+        # Check link expiry
+        if link.expires_at and link.expires_at <= timezone.now():
+            return Response(status=status.HTTP_404_NOT_FOUND)
         
-        # Remove internal fields
-        data.pop('user', None)
-        data.pop('ai_prompt', None)
-        data.pop('status', None) # Maybe?
+        # Get resume and check soft-delete
+        try:
+            resume = Resume.objects.get(id=link.resource_id, deleted_at__isnull=True)
+        except Resume.DoesNotExist:
+            return Response(status=status.HTTP_404_NOT_FOUND)
         
-        return Response(data)
+        # Serialize with public serializer (no sensitive fields)
+        serializer = ResumePublicSerializer(resume)
+        return Response(serializer.data)
 
 class PublicCoverLetterView(APIView):
     permission_classes = [permissions.AllowAny]
 
     def get(self, request, token):
+        # Get and validate share link
         link = ShareService.get_public_resource(token, ShareLink.ResourceType.COVER_LETTER)
         if not link:
             return Response(status=status.HTTP_404_NOT_FOUND)
-            
-        cl = get_object_or_404(CoverLetter, id=link.resource_id)
         
-        serializer = CoverLetterSerializer(cl)
-        data = serializer.data
-        data.pop('user', None)
+        # Check link expiry
+        if link.expires_at and link.expires_at <= timezone.now():
+            return Response(status=status.HTTP_404_NOT_FOUND)
         
-        return Response(data)
+        # Get cover letter and check soft-delete
+        try:
+            cl = CoverLetter.objects.get(id=link.resource_id, deleted_at__isnull=True)
+        except CoverLetter.DoesNotExist:
+            return Response(status=status.HTTP_404_NOT_FOUND)
+        
+        # Serialize with public serializer (no sensitive fields)
+        serializer = CoverLetterPublicSerializer(cl)
+        return Response(serializer.data)

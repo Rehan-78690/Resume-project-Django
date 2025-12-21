@@ -39,14 +39,21 @@ class TemplatePermissionTests(TestCase):
         self.client.force_authenticate(user=self.user)
         response = self.client.get('/api/templates/')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.data), 1)  # Only active template
+        # Handle pagination
+        data = response.data['results'] if 'results' in response.data else response.data
+        # Should NOT include inactive template
+        template_ids = [t['id'] for t in data]
+        self.assertIn('test-1', template_ids)
+        self.assertNotIn('test-2', template_ids)
     
     def test_admin_can_see_all_templates(self):
         """Admin users can see all templates including inactive."""
         self.client.force_authenticate(user=self.admin)
         response = self.client.get('/api/templates/')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertGreaterEqual(len(response.data), 2)
+        # Handle pagination
+        data = response.data['results'] if 'results' in response.data else response.data
+        self.assertGreaterEqual(len(data), 2)
     
     def test_regular_user_cannot_create_template(self):
         """Regular users cannot POST to /api/templates/."""
