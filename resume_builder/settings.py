@@ -204,9 +204,9 @@ REST_FRAMEWORK = {
         'rest_framework.throttling.ScopedRateThrottle',
     ],
     'DEFAULT_THROTTLE_RATES': {
-        'user': '100/hour',
-        'ai_generation': '10/hour',
-        'ai_rewrite': '30/hour',
+        'user': '10000/hour',
+        'ai_generation': '100/hour',
+        'ai_rewrite': '300/hour',
     },
 }
 # Logging Configuration

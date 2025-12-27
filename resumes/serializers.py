@@ -11,6 +11,40 @@ from .models import (
 User = get_user_model()
 
 
+# === Custom Fields ===
+class LenientURLField(serializers.URLField):
+    """
+    URLField that allows missing scheme (adds https://) and handles blank/None safely.
+    """
+    def to_internal_value(self, data):
+        allow_blank = getattr(self, "allow_blank", False)
+        allow_null = getattr(self, "allow_null", False)
+
+        # None handling
+        if data is None:
+            if allow_null:
+                return None
+            if allow_blank:
+                return ""
+            self.fail("null")
+
+        # String handling
+        if isinstance(data, str):
+            data = data.strip()
+
+            if data == "":
+                if allow_blank:
+                    return ""
+                self.fail("blank")
+
+            lower_data = data.lower()
+            if not (lower_data.startswith("http://") or lower_data.startswith("https://")):
+                data = f"https://{data}"
+
+        return super().to_internal_value(data)
+
+
+
 # === Nested Serializers ===
 class TemplateSerializer(serializers.ModelSerializer):
     class Meta:
@@ -49,6 +83,10 @@ class TemplateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("sections must be a dictionary")
             
         valid_areas = ['header', 'left', 'right', 'full']
+        
+        # Helper: Allow specific nested configs per section
+        # We only strictly validate structure, but allow optional visual toggles like 'show_photo'
+        
         for name, config in sections.items():
             if not isinstance(config, dict):
                 raise serializers.ValidationError(f"Section {name} config must be a dict")
@@ -61,9 +99,21 @@ class TemplateSerializer(serializers.ModelSerializer):
                     raise serializers.ValidationError(f"Section {name} 'order' must be non-negative int")
             if 'area' in config and config['area'] not in valid_areas:
                  raise serializers.ValidationError(f"Section {name} 'area' invalid. Must be one of {valid_areas}")
+            
+            # Allow show_photo if it's a boolean (specifically for personal_info usually, but flexible)
+            if 'show_photo' in config:
+                if not isinstance(config['show_photo'], bool):
+                    raise serializers.ValidationError(f"Section {name} 'show_photo' must be bool")
 
         return value
 class PersonalInfoSerializer(serializers.ModelSerializer):
+    # Use LenientURLField for all link fields
+    website = LenientURLField(required=False, allow_blank=True)
+    linkedin_url = LenientURLField(required=False, allow_blank=True)
+    github_url = LenientURLField(required=False, allow_blank=True)
+    portfolio_url = LenientURLField(required=False, allow_blank=True)
+    photo_url = LenientURLField(required=False, allow_blank=True)
+    
     class Meta:
         model = PersonalInfo
         fields = [
@@ -203,7 +253,7 @@ class ResumeUpdateSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = Resume
-        fields = ['title', 'template_id', 'language', 'target_role', 'status', 'section_settings']
+        fields = ['title', 'template_id', 'template', 'language', 'target_role', 'status', 'section_settings']
 
     def validate_section_settings(self, value):
         """Validate user overrides for sections"""
